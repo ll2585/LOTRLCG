@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ContentModelStore">
+    <e p="C:\Users\Luke\.Rider2019.2\system\extResources" t="IncludeRecursive" />
+    <e p="C:\Users\Luke\.Rider2019.2\system\resharper-host\local\Transient\ReSharperHost\v192\SolutionCaches\_LOTR.-586571216.00" t="ExcludeRecursive" />
+    <e p="C:\Users\Luke\LOTR" t="IncludeRecursive">
+      <e p="Assembly-CSharp.csproj" t="IncludeRecursive" />
+      <e p="Assets" t="Include">
+        <e p="AttachmentCard.cs" t="Include" />
+        <e p="Card.cs" t="Include" />
+        <e p="EnemyCard.cs" t="Include" />
+        <e p="EventCard.cs" t="Include" />
+        <e p="GameEvent.cs" t="Include" />
+        <e p="LocationCard.cs" t="Include" />
+        <e p="LOTRAbility.cs" t="Include" />
+        <e p="LOTRController.cs" t="Include" />
+        <e p="LOTRDispatcher.cs" t="Include" />
+        <e p="LOTRGame.cs" t="Include" />
+        <e p="LOTRGameEventHandler.cs" t="Include" />
+        <e p="LOTRHero.cs" t="Include" />
+        <e p="LOTRPlayer.cs" t="Include" />
+        <e p="OnMouseOverExample.cs" t="Include" />
+        <e p="PlayerCard.cs" t="Include" />
+        <e p="PlayerCardResponses.cs" t="Include" />
+        <e p="QuestCard.cs" t="Include" />
+        <e p="TreacheryCard.cs" t="Include" />
+      </e>
+      <e p="LOTR.sln" t="IncludeFlat" />
+      <e p="obj" t="ExcludeRecursive" />
+      <e p="Packages" t="ExcludeRecursive" />
+      <e p="Temp\bin" t="ExcludeRecursive" />
+    </e>
+  </component>
+</project>
