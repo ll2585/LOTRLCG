@@ -1,34 +1,40 @@
 ﻿public class LOTRAbility
 {
-    private bool does_activate_on_taking_damage;
-    private LOTRGame game;
-    private LOTRHero hero;
-    private LOTRPlayer player;
+    private LOTRGame.GAMEPHASE relevant_phase;
+    private bool expire_on_phase_change;
 
-    public LOTRAbility(bool activates_on_taking_damage = false)
+    public enum ABILITY_FLAGS
     {
-        this.does_activate_on_taking_damage = activates_on_taking_damage;
+        FARAMIR,
+        SNEAK_ATTACK,
+        FOR_GONDOR,
+        UNGOLIANTS_SPAWN,
+        CHIEFTAN_UFTHAK,
+        PLUS_ONE_ATTACK_ENEMY,
+        PLUS_THREE_ATTACK_ENEMY,
+        PLUS_ONE_THREAT,
+        FOREST_SPIDER,
+        CELEBRIANS_STONE
     }
-
-    public bool activates_on_taking_damage()
+    public enum CLEAR_MARKERS
     {
-        return this.does_activate_on_taking_damage;
+        END_OF_ROUND,
+        END_OF_PHASE
     }
-
-    public void set_game(LOTRGame game)
+    public LOTRAbility()
     {
-        this.game = game;
-    }
-    public void set_hero(LOTRHero hero)
-    {
-        this.hero = hero;
-    }
-    public void set_player(LOTRPlayer player)
-    {
-        this.player = player;
+        expire_on_phase_change = false;
     }
     
-    //TODO: make factories? make singletons?
-    
-    public LOTRAbility GLOIN_ABILITY = new LOTRAbility(activates_on_taking_damage: true);
+
+    public bool expires_on_phase_change()
+    {
+        return expire_on_phase_change;
+    }
+
+    public bool active_on_phase(LOTRGame.GAMEPHASE phase)
+    {
+        return relevant_phase == phase;
+    }
 }
+

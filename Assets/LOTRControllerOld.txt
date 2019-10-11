@@ -45,9 +45,6 @@ public class LOTRController : MonoBehaviour
     public Button option_3;
 
     public GameObject card_prefab;
-
-    public Dictionary<string, Dictionary<Card, GameObject>> mapping_of_card_to_objs;
-    public Dictionary<string, Dictionary<GameObject, Card>> mapping_of_obj_to_card;
     
     public Dictionary<GameObject, PlayerCard> mapping_of_obj_to_player_card;
     public Dictionary<PlayerCard, GameObject> mapping_of_player_card_to_obj;
@@ -76,7 +73,6 @@ public class LOTRController : MonoBehaviour
     private Dictionary<QuestCard, GameObject> mapping_of_cur_quest_to_obj;
     private GameObject cur_quest_obj;
 
-    public Text messages_text;
     private GameObject object_clicked;
     private bool picking_between_action_and_committing;
     private bool picking_between_action_and_defending;
@@ -91,19 +87,6 @@ public class LOTRController : MonoBehaviour
     {
         game = new LOTRGame();
         cur_quest_obj = null;
-        mapping_of_card_to_objs = new Dictionary<string, Dictionary<Card, GameObject>>();
-        mapping_of_obj_to_card = new Dictionary<string, Dictionary<GameObject, Card>>();
-        List<string> mapping_keys = new List<string>()
-        {
-            "heroes_allies", "staged_enemies", "engaged_enemies", 
-            "player_hand", "attachments", "location","shadow_cards","quest"
-        };
-        foreach (string key in mapping_keys)
-        {
-            mapping_of_card_to_objs[key] = new Dictionary<Card, GameObject>();
-            mapping_of_obj_to_card[key] = new Dictionary<GameObject, Card>();
-        }
-        
         mapping_of_obj_to_player_card = new Dictionary<GameObject, PlayerCard>();
         mapping_of_player_card_to_obj = new Dictionary<PlayerCard, GameObject>();
         mapping_of_obj_to_enemies_staging = new Dictionary<GameObject, EnemyCard>();
@@ -151,7 +134,6 @@ public class LOTRController : MonoBehaviour
         option_3.onClick.AddListener(() =>{option_clicked(3);});
         picking_between_action_and_committing = false;
         object_clicked = null;
-        LOTRGameEventHandler.add_handler_to_event_name(GameEvent.CARD_REVEALED, display_revealed_staged_card);
     }
 
     void option_clicked(int which)
@@ -161,11 +143,6 @@ public class LOTRController : MonoBehaviour
     void debug()
     {
         
-    }
-
-    void display_revealed_staged_card(object sender, EventArgs args)
-    {
-        messages_text.text = "OMG SOMEONE REVEALED";
     }
 
     // Update is called once per frame
@@ -284,7 +261,6 @@ public class LOTRController : MonoBehaviour
 
     void update_player_cards()
     {
-        
         List<LOTRHero> my_heroes = game.get_cur_player().get_heroes(); //do heroes first
         List<PlayerCard> the_allies = game.get_cur_player().get_allies();
         List<GameObject> keys_to_remove = new List<GameObject>();

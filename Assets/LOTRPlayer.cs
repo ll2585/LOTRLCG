@@ -1,4 +1,7 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 public class LOTRPlayer
@@ -7,8 +10,10 @@ public class LOTRPlayer
     private List<PlayerCard> ally_cards;
     private List<PlayerCard> cards;
     private List<PlayerCard> cards_in_hand;
+    private List<PlayerCard> discard_pile;
     private int threat;
     private List<EnemyCard> engaged_enemies;
+    private List<LOTRAbility> abilities;
 
     public LOTRPlayer()
     {
@@ -18,7 +23,15 @@ public class LOTRPlayer
         engaged_enemies = new List<EnemyCard>();
         ally_cards = new List<PlayerCard>();
         cards_in_hand = new List<PlayerCard>();
+        discard_pile = new List<PlayerCard>();
         cards = PlayerCard.LEADERSHIP_CARDS();
+        Utils.Shuffle(cards);
+        abilities = new List<LOTRAbility>();
+    }
+
+    public void add_ability(LOTRAbility ability)
+    {
+        abilities.Add(ability);
     }
 
     public void add_resource_token_to_all_heroes()
@@ -29,9 +42,50 @@ public class LOTRPlayer
         }
     }
 
+    public void discard_all_cards(string type)
+    {
+        foreach (var card in cards_in_hand)
+        {
+            if (card.get_type() == type)
+            {
+                discard_pile.Add(card);
+            }
+        }
+        cards_in_hand.RemoveAll(x => x.get_type() == type);
+    }
+    
+    public void discard_card_at_index(int index)
+    {
+        PlayerCard card_to_discard = cards_in_hand[index];
+        discard_pile.Add(card_to_discard);
+        cards_in_hand.RemoveAt(index);
+    }
+    
+    public void ally_died(PlayerCard ally)
+    {
+        int card_index = -1;
+        for (var i = 0; i < ally_cards.Count; i++)
+        {
+            PlayerCard card = ally_cards[i];
+            if (card == ally)
+            {
+                discard_pile.Add(card);
+                break;
+            }
+        }
+
+        if (card_index != -1)
+        {
+            ally_cards.RemoveAt(card_index);
+        }
+    }
+
     public void draw_card()
     {
-        cards_in_hand.Add(cards[0]);
+        PlayerCard card_to_draw = cards[0];
+        cards_in_hand.Add(card_to_draw);
+        card_to_draw.enters_the_game();
+        Debug.Log(card_to_draw.get_name() + " AHS ENTERED THE GAME");
         cards.RemoveAt(0);
     }
 
@@ -95,6 +149,19 @@ public class LOTRPlayer
         }
     }
 
+    public bool has_hero_of_sphere(LOTRGame.SPHERE_OF_INFLUENCE sphere)
+    {
+        foreach (var hero in heroes)
+        {
+            if (hero.get_sphere() == sphere)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public void enemy_attack_resolved(EnemyCard enemy)
     {
         foreach (EnemyCard e in engaged_enemies)
@@ -119,6 +186,30 @@ public class LOTRPlayer
         return false;
     }
 
+    public void discard_attachment(AttachmentCard attachment)
+    {
+        foreach (PlayerCard card in all_characters())
+        {
+            if(card.has_attachment(attachment))
+            {
+                card.discard_attachment(attachment);
+                break;
+            }
+        }
+    }
+
+    public List<PlayerCard> all_characters()
+    {
+        List<PlayerCard> result = new List<PlayerCard>();
+        result.AddRange(get_allies());
+        foreach (PlayerCard hero in get_heroes())
+        {
+            result.Add(hero);
+        }
+
+        return result;
+    }
+
     public bool has_enemies_to_attack()
     {
         return engaged_enemies.Count > 0;
@@ -141,10 +232,18 @@ public class LOTRPlayer
         return this.threat;
     }
 
-    public int get_willpower_committed()
+    public int get_willpower_committed(LOTRGame.GAMEPHASE cur_phase)
     {
         var result = 0;
         foreach (var h in heroes)
+        {
+            if (h.is_committed())
+            {
+                result += h.get_willpower();
+            }
+        }
+        
+        foreach (var h in ally_cards)
         {
             if (h.is_committed())
             {
@@ -155,15 +254,85 @@ public class LOTRPlayer
         return result;
     }
 
-    public bool has_responses(GameEvent e)
+    public void new_phase_started()
     {
-    List<PlayerCard> all_cards = new List<PlayerCard>();
-    all_cards.AddRange(heroes);
-    all_cards.AddRange(ally_cards);
-    all_cards.AddRange(cards);
-        foreach (var card in all_cards)
+        //sneak attack
+        List<int> sneak_attacked_card_indices = new List<int>();
+        for (var i = 0; i < ally_cards.Count; i++)
         {
-            if (card.responds_to_event(e))
+            PlayerCard card = ally_cards[i];
+            if (card.has_flag(LOTRAbility.ABILITY_FLAGS.SNEAK_ATTACK))
+            {
+                Debug.Log("SNEAKED");
+                sneak_attacked_card_indices.Add(i);
+                add_card_to_hand(card);
+            }
+        }
+        foreach (var sneak_attack_index in sneak_attacked_card_indices)
+        {
+            ally_cards.RemoveAt(sneak_attack_index);
+        }
+        reset_all_flags();
+
+    }
+
+    private void reset_all_flags()
+    {
+        foreach (var card in heroes)
+        {
+            card.reset_flags();
+        }
+        foreach (var card in ally_cards)
+        {
+            card.reset_flags();
+        }
+        foreach (var card in cards_in_hand)
+        {
+            card.reset_flags();
+        }
+        
+    }
+
+    public List<AttachmentCard> get_all_attachments()
+    {
+        List<AttachmentCard> result = new List<AttachmentCard>();
+        foreach (var character in all_characters())
+        {
+            result.AddRange(character.get_attachments());
+        }
+
+        return result;
+    }
+    public void add_card_to_hand(PlayerCard card)
+    {
+        cards_in_hand.Add(card);
+        card.enters_the_game();
+    }
+
+    public bool has_ability(LOTRAbility ability)
+    {
+        return abilities.Contains(ability);
+    }
+
+    public bool can_play_actions(EventArgs args)
+    {
+        foreach (var card in cards_in_hand)
+        {
+            if (card.action_playable(args))
+            {
+                return true;
+            }
+        }
+        foreach (var card in ally_cards)
+        {
+            if (card.action_playable(args))
+            {
+                return true;
+            }
+        }
+        foreach (var card in heroes)
+        {
+            if (card.action_playable(args))
             {
                 return true;
             }
@@ -171,6 +340,25 @@ public class LOTRPlayer
 
         return false;
     }
+
+    public void clear_abilities_on_phase_change(LOTRGame.GAMEPHASE new_phase)
+    {
+        List<int> indicies_to_remove = new List<int>();
+        for (var i = 0; i <  abilities.Count; i++)
+        {
+            var ability = abilities[i];
+            if (ability.expires_on_phase_change() && !ability.active_on_phase(new_phase))
+            {
+                indicies_to_remove.Add(i);
+            }
+        }
+
+        foreach (var index in indicies_to_remove)
+        {
+            abilities.RemoveAt(index);
+        }
+    }
+    
 
     public void debug()
     {
@@ -185,6 +373,7 @@ public class LOTRPlayer
                 hero.set_resources(2);
             }
         }
+        
         
     }
 
@@ -202,6 +391,7 @@ public class LOTRPlayer
     public void add_hero(LOTRHero hero)
     {
         heroes.Add(hero);
+        hero.enters_the_game();
         this.threat += hero.get_threat_level();
     }
 

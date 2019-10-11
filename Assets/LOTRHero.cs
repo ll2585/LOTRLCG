@@ -1,4 +1,5 @@
 ﻿
+using System;
 using System.Collections.Generic;
 
 public class LOTRHero : PlayerCard
@@ -46,11 +47,6 @@ public class LOTRHero : PlayerCard
         return threat_cost;
     }
     
-    
-    public int get_willpower()
-    {
-        return this.willpower_strength;
-    }
 
     public string get_name()
     {
@@ -78,7 +74,7 @@ public class LOTRHero : PlayerCard
         this.resource_tokens -= 1;
     }
     
-    public LOTRGame.SPHERE_OF_INFLUENCE  get_resource_type()
+    public LOTRGame.SPHERE_OF_INFLUENCE get_resource_type()
     {
         return this.sphere_of_influence;
     }
@@ -92,8 +88,11 @@ public class LOTRHero : PlayerCard
             ability:
             "sentinel. response after he commits to a quest, spend 1 resource from his resource poool to ready him",
             set: "??");
-        the_hero.respond_on_event(GameEvent.get_instance(GameEvent.GAME_EVENT_TYPE.COMMITTED),
-            PlayerCardResponses.aragorn);
+        the_hero.respond_to_event(GameEvent.CARD_COMMITTED_KEY,
+            PlayerCardResponses.action_maker(new List<Func<EventArgs, Card, bool>>() {  CardEnablers.card_is_me}, PlayerCardResponses.aragorn,  the_hero));
+        the_hero.respond_to_event(GameEvent.SHADOW_CARD_DEALT,
+            PlayerCardResponses.action_maker(new List<Func<EventArgs, Card, bool>>() {  }, PlayerCardResponses.shadow_card_test, the_hero,fires_on_other_cards:true));
+
         return the_hero;
     }
     
@@ -105,8 +104,11 @@ public class LOTRHero : PlayerCard
             ability:
             "Response: After Glóin suffers damage, add 1 resource to his resource pool for each point of damage he just suffered.",
             set: "??");
-        the_hero.respond_on_event(GameEvent.get_instance(GameEvent.GAME_EVENT_TYPE.TAKE_DAMAGE),
-            PlayerCardResponses.gloin);
+        the_hero.respond_to_event(GameEvent.CHARACTER_TOOK_DAMAGE,
+            PlayerCardResponses.action_maker(new List<Func<EventArgs, Card, bool>>() {  CardEnablers.card_is_me}, PlayerCardResponses.gloin,  the_hero));
+        the_hero.respond_to_event(GameEvent.SHADOW_CARD_DEALT,
+            PlayerCardResponses.action_maker(new List<Func<EventArgs, Card, bool>>() {  }, PlayerCardResponses.shadow_card_test, the_hero,fires_on_other_cards:true));
+
         return the_hero;
     }
     
@@ -118,8 +120,11 @@ public class LOTRHero : PlayerCard
             ability:
             "Response: After Théodred commits to a quest, choose a hero committed to that quest. Add 1 resource to that hero's resource pool.",
             set: "??");
-        the_hero.respond_on_event(GameEvent.get_instance(GameEvent.GAME_EVENT_TYPE.COMMITTED),
-            PlayerCardResponses.theodred);
+        the_hero.respond_to_event(GameEvent.CARD_COMMITTED_KEY,
+            PlayerCardResponses.action_maker(new List<Func<EventArgs, Card, bool>>() {  CardEnablers.card_is_me}, PlayerCardResponses.theodred, the_hero, valid_targets:CardEnablers.valid_targets_player_heroes));
+        the_hero.respond_to_event(GameEvent.SHADOW_CARD_DEALT,
+            PlayerCardResponses.action_maker(new List<Func<EventArgs, Card, bool>>() {  }, PlayerCardResponses.shadow_card_test, the_hero,fires_on_other_cards:true));
+
         return the_hero;
     }
     

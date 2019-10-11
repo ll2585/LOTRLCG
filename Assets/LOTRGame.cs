@@ -29,14 +29,27 @@ public class LOTRGame
     Dictionary<LOTRPlayer, bool> player_done_engaging; //TODO; maybe maybe this local variable?
     private int damage_to_be_dealt;
     private GAMESTATE state_before_response;
+    private GAMESTATE state_before_actions;
     private bool response_is_yes_no;
     private Action action_after_responding_yes;
     private Action<Card> action_with_card_after_responding_yes;
     private List<Card> cards_set_true;
 
-
     private LOTRGameEventHandler game_event_handler;
     private Action continuing_after_response;
+
+    private Action after_actions_played;
+    private bool allowing_actions;
+
+    private Action<Card> action_after_paying_for_card;
+    private bool forced_response_after_action;
+    private int times_to_respond;
+    private int times_responded;
+    private bool waiting_for_player_response;
+    private Card card_to_respond_to;
+    private bool allow_actions_after_response;
+
+    private int num_options_to_display;
     
     public enum GAMESTATE
     {
@@ -57,7 +70,9 @@ public class LOTRGame
         DECLARING_ATTACKERS,
         DONE_ATTACKING,
         CHOOSING_TRAVEL,
-        WAITING_FOR_RESPONSE
+        WAITING_FOR_RESPONSE,
+        WAITING_FOR_RESPONSE_FORCED,
+        WAITING_FOR_PLAYER_TO_DECIDE_IF_HE_WANTS_TO_USE_ACTIONS
     }
     public enum GAMEPHASE
     {
@@ -72,6 +87,7 @@ public class LOTRGame
 
     public enum SPHERE_OF_INFLUENCE
     {
+        NEUTRAL,
         LEADERSHIP,
         LORE,
         SPIRIT,
@@ -97,7 +113,12 @@ public class LOTRGame
         INSECT,
         FOREST,
         MOUNTAIN,
-        TITLE
+        TITLE,
+        DOL_GULDUR,
+        STRONGHOLD,
+        ITEM,
+        ARTIFACT,
+        ISTARI
     }
 
     public LOTRGame()
@@ -110,18 +131,27 @@ public class LOTRGame
         return cur_state;
     }
 
+    public Card get_card_to_respond_to()
+    {
+        return card_to_respond_to;
+    }
+
 
     public void initialize_game()
     {
         this.game_event_handler = new LOTRGameEventHandler(this);
         response_is_yes_no = false;
+        waiting_for_player_response = false;
+        EnemyCardResponses.set_game(this);
         PlayerCardResponses.set_game(this);
+        CardEnablers.set_game(this);
         cur_player = null;
         cur_location = null;
         players = new List<LOTRPlayer>();
         staged_cards = new List<EnemyCard>();
         encounter_discard_pile = new List<EnemyCard>();
-        enemy_deck = EnemyCard.DEBUG_DECK();
+        enemy_deck = EnemyCard.PASSAGE_THROUGH_MIRWOOD_ENEMIES();
+        //Utils.Shuffle(enemy_deck);
         for (var i = 0; i < num_players; i++)
         {
             players.Add(new LOTRPlayer());
@@ -130,7 +160,12 @@ public class LOTRGame
         players[0].add_hero(LOTRHero.GLOIN());
         players[0].add_hero(LOTRHero.THEODRED());
         player_done_engaging = new Dictionary<LOTRPlayer, bool>();
-        game_event_handler.register_cards(players[0].get_heroes().Cast<PlayerCard>().ToList());
+        allowing_actions = false;
+        forced_response_after_action = false;
+        times_to_respond = 1;
+        card_to_respond_to = null;
+        times_responded = 0;
+        num_options_to_display = -1;
         begin_game();
     }
 
@@ -138,24 +173,143 @@ public class LOTRGame
     {
         cur_state = GAMESTATE.GAME_START;
         cur_quest = QuestCard.PASSAGE_THROUGH_MIRKWOOD_1B();
+        cur_player = players[0];
+        for (int i = 0; i < 6; i++)
+        {
+            cur_player.draw_card(); //mulligan blah
+        }
         begin_resource_phase();
     }
 
     void begin_resource_phase()
     {
-        cur_phase = GAMEPHASE.RESOURCE;
+        new_phase_started(GAMEPHASE.RESOURCE);
+        disallow_actions();
         foreach (var player in players)
         {
             player.add_resource_token_to_all_heroes();
-            player.draw_card();
+            if (cur_location != null && (cur_location.get_name() == LocationCard.ENCHANTED_STREAM().get_name()))
+            {
+                
+            }
+            else
+            {
+                player.draw_card();
+            }
         }
 
-        begin_planning_phase();
+        allow_actions_to_be_played(begin_planning_phase);
     }
+
+    public List<LOTRPlayer> get_players()
+    {
+        return this.players;
+    }
+    
+    public void allow_actions_to_be_played(Action next_function)
+    {
+        allow_actions_to_be_played();
+        Debug.Log(get_cur_phase() + " and next is " + next_function);
+        after_actions_played = next_function;
+        if (after_actions_played == null)
+        {
+            Debug.Log("WTF WHY IS THIS NULL");
+        }
+
+        if (player_can_play_actions())
+        {
+            play_actions_phase();
+        }
+        else
+        {
+            Debug.Log("ACTIONSF INISHED FIRING");
+            actions_finished();
+        }
+    }
+
+    void new_phase_started(LOTRGame.GAMEPHASE new_phase)
+    {
+        Debug.Log("new phase started");
+        cur_phase = new_phase;
+        foreach (LOTRPlayer player in players)
+        {
+            ///player.clear_abilities_on_phase_change(cur_phase);
+            player.new_phase_started();
+        }
+    }
+    
+    public bool player_can_play_actions()
+    {
+        foreach (LOTRPlayer player in players)
+        {
+            if (player.can_play_actions(new GameArgs(game: this, p: player)))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    public void action_played(PlayerCard card)
+    {
+        state_before_actions = get_cur_state();
+        Debug.Log("OK was played " + card.get_name());
+        disallow_actions(); //todo: maybe not if you can chain actions
+        game_event_handler.fire_game_event(GameEvent.ACTIVATED_ACTION, new GameArgs(game: this, p: get_cur_player(), c:card));
+    }
+
+    public void execute_action(Action a)
+    {
+        a();
+        allow_actions_to_be_played();
+    }
+
+    public void played_action_from_hand(PlayerCard card, bool needs_response)
+    {
+        //game.wait_for_forced_response(after_responding_with_card: the_action);
+        Debug.Log("PLAUED " + card.get_name() + " FROM HAND");
+        forced_response_after_action = needs_response;
+        player_played_card(get_cur_player(), card);
+    }
+    
+    
+    public void play_actions_phase()
+    {
+        Debug.Log("OK actiosn played");
+        cur_state = GAMESTATE.WAITING_FOR_PLAYER_TO_DECIDE_IF_HE_WANTS_TO_USE_ACTIONS;
+        allow_actions_to_be_played();
+        //actions_finished();
+    }
+
+    private void allow_actions_to_be_played()
+    {
+        Debug.Log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!ALOWING ACTIONS!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!11");
+        allowing_actions = true;
+    }
+
+    private void disallow_actions()
+    {
+        allowing_actions = false;
+    }
+
+    public bool is_allowing_actions()
+    {
+        return allowing_actions;
+    }
+    
+    public void actions_finished()
+    {
+        disallow_actions();
+        after_actions_played();
+        Debug.Log("OK ACTIONS FINISHED");
+    }
+
+
 
     void begin_planning_phase()
     {
-        cur_phase = GAMEPHASE.PLANNING;
+        allow_actions_to_be_played();
+        new_phase_started(GAMEPHASE.PLANNING);
         cur_state = GAMESTATE.PLAYING_CARDS;
         cur_player = players[0];
         debug();
@@ -183,9 +337,24 @@ public class LOTRGame
 
     public void player_played_card(LOTRPlayer player, PlayerCard card)
     {
+        disallow_actions();
         cur_state = GAMESTATE.PAYING_FOR_CARD;
         resources_paid = 0;
         card_played = card;
+        Debug.Log("@L$ERK#TJ$KGJM");
+        if (card_played.get_cost() == 0 && cur_player.has_hero_of_sphere(card.get_sphere()))
+        {
+            if (card_played.is_attachment())
+            {
+                Debug.Log("ATTACGHMENT PLAYED");
+                cur_state = GAMESTATE.CHOOSING_CHARACTER_TO_ATTACH_ATTACHMENT;
+            }
+            else
+            {
+                Debug.Log("CARD PLAYED");
+                card_has_been_played(player);
+            }
+        }
     }
 
     public void hero_resource_paid(LOTRPlayer player, LOTRHero hero)
@@ -194,7 +363,7 @@ public class LOTRGame
         //TODO: check for neutral, cost of zero
         if (card_played != null)
         {
-            if (card_played.get_resource_type() == hero.get_resource_type())
+            if ((card_played.get_resource_type() == hero.get_resource_type()) || (card_played.get_resource_type() == SPHERE_OF_INFLUENCE.NEUTRAL))
             {
                 hero.pay_resource();
                 resources_paid += 1;
@@ -210,23 +379,59 @@ public class LOTRGame
                 }
                 else
                 {
+                    Debug.Log("CARD PLAYED");
                     card_has_been_played(player);
                 }
             }
         }
     }
 
+    public PlayerCard get_card_played()
+    {
+        return card_played;
+    }
+
     private void card_has_been_played(LOTRPlayer player)
     {
         player.play_card(card_played);
-        game_event_handler.register_cards(new List<PlayerCard>() {card_played});
-        fire_game_event(cur_player, GameEvent.GAME_EVENT_TYPE.CARD_ENTERS_PLAY, new GameArgs(c:card_played, a:()=>{cur_state = GAMESTATE.PLAYING_CARDS; card_played = null;}));
+        //game_event_handler.register_cards(new List<PlayerCard>() {card_played});
+        Debug.Log("CARD HAS BEEN PLAYED#(O$I()*%$U*(GJ$IOG");
+        if (cur_phase == GAMEPHASE.PLANNING)
+        {
+            game_event_handler.fire_game_event(GameEvent.CARD_PLAYED_KEY, new GameArgs(c:card_played, a:()=>
+            {
+                Debug.Log("OK WHY"); 
+                cur_state = GAMESTATE.PLAYING_CARDS; 
+                card_played = null;
+                allow_actions_to_be_played();
+            },  p: get_cur_player(), game:this));
+        }
+        else //playing actions not in planning phase
+        {
+            Debug.Log(cur_state);
+           // cur_state = GAMESTATE.WAITING_FOR_PLAYER_TO_DECIDE_IF_HE_WANTS_TO_USE_ACTIONS;
+            game_event_handler.fire_game_event(GameEvent.CARD_PLAYED_KEY, new GameArgs(c:card_played, a:()=>
+            {
+                Debug.Log("Firing this game event CARD PLAYED CALLBACK");
+                card_played = null;
+                if (forced_response_after_action)
+                {
+                    done_responding();
+                }
+                
+                cur_state = state_before_actions;
+                //allow_actions_to_be_played();
+            },  p: get_cur_player(), game:this));
+        }
         
     }
 
     public void card_attached(LOTRPlayer player, PlayerCard character)
     {
+        Debug.Log("Attached " + card_played.get_name() + " to " + character.get_name());
         character.add_attachment((AttachmentCard) card_played);
+        Debug.Log(string.Join(",", character.get_attachments()
+            .Select(array => string.Join(" ", array))));
         card_has_been_played(player);
     }
     
@@ -234,22 +439,19 @@ public class LOTRGame
     {
         //todo: check that player owns hero
         character.commit();
-        fire_game_event(player, GameEvent.GAME_EVENT_TYPE.COMMITTED, new GameArgs(c:character));
+        game_event_handler.fire_game_event(GameEvent.CARD_COMMITTED_KEY,new GameArgs(c:character));
+        Debug.Log("Does this actullay wait");
+        //fire_game_event(player, GameEvent.GAME_EVENT_TYPE.COMMITTED, new GameArgs(c:character));
     }
 
-    private void fire_game_event(LOTRPlayer player, GameEvent.GAME_EVENT_TYPE event_type, GameArgs data)
+    public bool can_commit_card(PlayerCard card)
     {
-        GameEvent e = GameEvent.get_instance(event_type, data);
-        if (player.has_responses(e))
-        {
-            game_event_handler.fire_event(e, data);
-        }
-        else
-        {
-            data.what_to_do_after_event_or_if_no_response();
-        }
+        bool is_exhausted = card.is_exhausted();
+        bool is_committed = card.is_committed();
+        bool is_hero_played = get_cur_player().get_heroes().Contains(card);
+        bool is_ally_played = get_cur_player().get_allies().Contains(card);
+        return !is_committed && !is_exhausted && (is_ally_played || is_hero_played);
     }
-    
     public void finish_committing()
     {
         cur_state = GAMESTATE.STAGING;
@@ -283,14 +485,53 @@ public class LOTRGame
 
     void do_staging()
     {
+        disallow_actions();
         foreach (var p in players)
         {
             var new_card = draw_from_deck();
-            staged_cards.Add(new_card); 
             reveal(new_card);
+            if (!new_card.is_treachery_card())
+            {
+                staged_cards.Add(new_card); 
+            }
         }
+    }
 
-        quest_resolution();
+    public void add_new_encounter_card_to_staging()
+    {
+        var new_card = draw_from_deck();
+        reveal(new_card);
+        if (!new_card.is_treachery_card())
+        {
+            staged_cards.Add(new_card); 
+        }
+        
+    }
+
+    public void cur_player_discard_attachment(AttachmentCard attachment=null, bool all=false)
+    {
+        if (all)
+        {
+            foreach (PlayerCard hero in get_cur_player().get_heroes())
+            {
+                foreach (AttachmentCard a in hero.get_attachments())
+                {
+                    cur_player.discard_attachment(a);
+                }
+            }
+
+            foreach (PlayerCard ally in get_cur_player().get_allies())
+            {
+                foreach (AttachmentCard a in ally.get_attachments())
+                {
+                    cur_player.discard_attachment(a);
+                }
+            } //TODO: fire events blahblah
+        }
+        else
+        {
+            cur_player.discard_attachment(attachment);
+        }
     }
 
     public List<EnemyCard> get_staged_enemies()
@@ -306,11 +547,26 @@ public class LOTRGame
     void reveal(EnemyCard card)
     {
         //TODO: when revealed
-        if (card.is_treachery_card())
+        card.enters_the_game();
+        game_event_handler.fire_game_event(GameEvent.CARD_REVEALED_ALLOW_COUNTER,new GameArgs(c:card, a: () =>
         {
-            resolve_treachery_card((TreacheryCard) card);
-            
-        }
+            game_event_handler.fire_game_event(GameEvent.CARD_REVEALED, new GameArgs(c: card, a: () =>
+            {
+                if (card.is_treachery_card())
+                {
+                    resolve_treachery_card((TreacheryCard) card);
+                }
+
+                Debug.Log("OK STAGING FINISHED");
+                allow_actions_to_be_played(quest_resolution); //todo: change this so it can fit multiple players
+            }, game: this, p: get_cur_player()));
+        }, game: this, p: get_cur_player()));
+        
+    }
+
+    public void continue_staging()
+    {
+        
     }
 
     void resolve_treachery_card(TreacheryCard card)
@@ -324,10 +580,13 @@ public class LOTRGame
                 staged_cards.RemoveAt(i);
             }
         }
+        
+        
     }
 
     void quest_resolution()
     {
+        disallow_actions();
         int willpower_committed = get_willpower_committed();
 
         int threat_strength = get_enemy_threat();
@@ -340,8 +599,8 @@ public class LOTRGame
         {
             unsuccessful_quest(willpower_committed, threat_strength);
         }
-        
-        begin_travel_phase();
+        Debug.Log("OK QUEST FINISHED");
+        allow_actions_to_be_played(begin_travel_phase);
     }
 
     public int get_willpower_committed()
@@ -349,7 +608,7 @@ public class LOTRGame
         int willpower_committed = 0;
         foreach (var p in players)
         {
-            willpower_committed += p.get_willpower_committed();
+            willpower_committed += p.get_willpower_committed(cur_phase);
         }
 
         return willpower_committed;
@@ -446,18 +705,34 @@ public class LOTRGame
 
     void begin_quest_phase()
     {
-        cur_phase = GAMEPHASE.QUEST;
+        new_phase_started(GAMEPHASE.QUEST);
         cur_state = GAMESTATE.COMMITTING_CHARACTERS;
     }
     
     void begin_travel_phase()
     {
-        cur_phase = GAMEPHASE.TRAVEL;
+        new_phase_started(GAMEPHASE.TRAVEL);
+        disallow_actions();
         cur_state = GAMESTATE.CHOOSING_TRAVEL;
-        if (no_travel_card_in_staging() || already_traveled())
+        if (no_travel_card_in_staging() || already_traveled() || !can_travel_to_any_locations())
         {
             begin_encounter_phase();
         }
+    }
+
+    bool can_travel_to_any_locations()
+    {
+        foreach (var card in staged_cards)
+        {
+            if (card.get_type() == "LOCATION")
+            {
+                if (((LocationCard) card).can_travel_here(new GameArgs(game: this, p: get_cur_player())))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     public void location_chosen(LocationCard location_to_travel_to)
@@ -495,6 +770,7 @@ public class LOTRGame
     
     public bool can_travel_to_location()
     {
+        
         return cur_location == null;
     }
 
@@ -506,11 +782,16 @@ public class LOTRGame
             {
                 cur_location = location; //TOOD: remove from staging
                 staged_cards.RemoveAt(i);
+                game_event_handler.fire_game_event(GameEvent.LOCATION_TRAVELED, new GameArgs(game: this, p: get_cur_player(), c:location, a:
+                    () =>
+                    {
+                        finish_travel_phase();
+                    }));
                 break;
             }
         } //TODO: travel effects
 
-        finish_travel_phase();
+        
     }
 
     public void do_not_travel()
@@ -520,13 +801,14 @@ public class LOTRGame
 
     public void finish_travel_phase()
     {
-        begin_encounter_phase();
+        allow_actions_to_be_played(begin_encounter_phase);
     }
     
     void begin_encounter_phase()
     {
+        new_phase_started(GAMEPHASE.ENCOUNTER);
+        disallow_actions();
         //check for no encounters
-        cur_phase = GAMEPHASE.ENCOUNTER;
         cur_state = GAMESTATE.PLAYER_ENGAGEMENT;
         if (no_cards_to_encounter())
         {
@@ -562,16 +844,20 @@ public class LOTRGame
 
     public void player_engage_enemy(LOTRPlayer player, EnemyCard enemy)
     {
+        disallow_actions();
         //TODO: limit to 1
         for (var i = 0; i < staged_cards.Count; i++)
         {
             if (staged_cards[i] == enemy)
             {
                 player.engage_enemy(enemy);
+                game_event_handler.fire_game_event(GameEvent.ENEMY_ENGAGED, new GameArgs(
+                    c: enemy)); //hopefulyl no callback
                 staged_cards.RemoveAt(i);
                 break;
             }
         } //TODO: engage effects
+        allow_actions_to_be_played();
     }
     
     
@@ -596,6 +882,7 @@ public class LOTRGame
     }
     void check_for_enemy_engagements()
     {
+        disallow_actions();
         foreach (var player in players)
         {
             player_done_engaging[player] = false;
@@ -635,11 +922,11 @@ public class LOTRGame
             //warning: infinite loop possibility...
         }
         //TODO: repeat across players, and then reiterate while there are engaged enemies
-        begin_combat_phase();
+        allow_actions_to_be_played(begin_combat_phase);
     }
     void begin_combat_phase()
     {
-        cur_phase = GAMEPHASE.COMBAT;
+        new_phase_started(GAMEPHASE.COMBAT);
         foreach (var player in players)
         {
             player.reset_engaged_enemy_resolutions();
@@ -649,25 +936,59 @@ public class LOTRGame
 
     void deal_shadow_card_to_players_engaged_enemies(LOTRPlayer player)
     {
+        disallow_actions();
         foreach (var engaged_enemy in player.get_engaged_enemies())
         {
-            engaged_enemy.add_shadow_card(get_shadow_card());
+            if (!engaged_enemy.has_shadow_cards())
+            {
+                if (enemy_deck.Count > 0)
+                {
+                    EnemyCard shadow_card = enemy_deck[0];
+                    enemy_deck.RemoveAt(0);
+                    shadow_card.set_face_down();
+                    engaged_enemy.add_shadow_card(shadow_card); //todo: highest engagement first
+                    //TODO: maybe throw an event for this guy but for now just do this here....
+                    if (engaged_enemy.get_name() == EnemyCard.DOL_GULDUR_BEASTMASTER().get_name())
+                    {
+                        EnemyCard shadow_card2 = enemy_deck[0];
+                        enemy_deck.RemoveAt(0);
+                        shadow_card2.set_face_down();
+                        engaged_enemy.add_shadow_card(shadow_card2); //todo: highest engagement first
+                    }
+                }
+                
+            }
+            
         }
-
-        resolve_enemy_attacks();
+        allow_actions_to_be_played(resolve_enemy_attacks);
+       
     }
 
     void resolve_enemy_attacks()
     {
-        if (cur_player.has_engaged_enemies())
+        Action callback = () =>
         {
-            cur_state = GAMESTATE.CHOOSING_ENEMY_TO_RESOLVE_ENEMY_ATTACK;
-        }
-        else
+            allow_actions_to_be_played();
+            if (cur_player.has_engaged_enemies())
+            {
+                cur_state = GAMESTATE.CHOOSING_ENEMY_TO_RESOLVE_ENEMY_ATTACK;
+            }
+            else
+            {
+                attack_enemies();
+                //todo: loop to the next player
+            }
+        };
+        if (attacking_enemy != null)
         {
-            attack_enemies();
-            //todo: loop to the next player
+            game_event_handler.fire_game_event(GameEvent.ENEMY_ATTACK_RESOLVED, new GameArgs(
+                c: attacking_enemy,
+                a: callback));
+        } else //the first enemy chosen
+        {
+            callback();
         }
+        
         //TODO: enable playing actions
         //TODO; check to see if there are still enemies
     }
@@ -683,9 +1004,11 @@ public class LOTRGame
 
     public void player_chose_enemy_to_resolve(LOTRPlayer player, EnemyCard enemy)
     {
+        disallow_actions();
         //todo: check that enemy is engaging player
         attacking_enemy = enemy;
         cur_state = GAMESTATE.DECLARING_DEFENDER;
+        allow_actions_to_be_played();
     }
 
     public void player_chose_enemy_to_attack(LOTRPlayer player, EnemyCard enemy)
@@ -745,11 +1068,25 @@ public class LOTRGame
     void shadow_cards_leave_play()
     {
         //?!!
+        foreach (var player in players)
+        {
+            foreach (var engaged_enemy in player.get_engaged_enemies())
+            {
+                if (engaged_enemy.has_shadow_cards())
+                {
+                    
+                    encounter_discard_pile.AddRange(engaged_enemy.get_shadow_cards());
+                    engaged_enemy.discard_shadow_cards();
+                    Debug.Log("BYE SHADOW CARD FOR " + engaged_enemy.get_name());
+                }
+            }
+        }
     }
     
 
     public void player_chose_defender(LOTRPlayer player, PlayerCard defender)
     {
+        disallow_actions();
         if (defender != null && defender.is_exhausted())
         {
             Debug.Log("CANT DEFEND, I AM EXHAUSTED");
@@ -768,7 +1105,7 @@ public class LOTRGame
             Debug.Log("ATTACK DEFENDED BY " + defender.get_name());
             attack_undefended = false;
         }
-
+        allow_actions_to_be_played();
         resolve_shadow_effect(attacking_enemy);
     }
 
@@ -785,8 +1122,41 @@ public class LOTRGame
     void resolve_shadow_effect(EnemyCard enemy)
     {
         //TODO: ?!?!
+        disallow_actions();
         cur_state = GAMESTATE.RESOLVING_SHADOW_EFFECT;
-        determine_combat_damage_enemy_attack_player_defend();
+        if (enemy.has_shadow_cards())
+        {
+            foreach (EnemyCard shadow_card in enemy.get_shadow_cards())
+            {
+                //DOES THIS WORK?!?!?!?!
+                //EnemyCard shadow_card = enemy.get_shadow_card();
+                shadow_card.set_face_up();
+                shadow_card.enters_the_game();
+                game_event_handler.fire_game_event(GameEvent.SHADOW_CARD_REVEALED,new GameArgs(
+                    c:shadow_card,
+                    a: () =>
+                    {
+                        shadow_card.set_shadow_effect_resolved();
+                        if (enemy.all_shadow_cards_resolved())
+                        {
+                            Debug.Log("DONE RESOLVING SHADOW EFFECT");
+                            allow_actions_to_be_played();
+                            determine_combat_damage_enemy_attack_player_defend();
+                        }
+                        
+                    }, 
+                    attack_undefended:attack_is_undefended(),
+                    secondary_card: enemy));
+            }
+            
+        }
+        else
+        {
+            allow_actions_to_be_played();
+            determine_combat_damage_enemy_attack_player_defend();
+        }
+        
+        
     }
 
     bool attack_is_undefended()
@@ -808,17 +1178,54 @@ public class LOTRGame
 
         if (!attack_is_undefended())
         {
-            defending_player_card.take_damage(damage_to_be_dealt);
-            fire_game_event(cur_player, GameEvent.GAME_EVENT_TYPE.TAKE_DAMAGE, 
-                new GameArgs(c:defending_player_card, 
-                    i: damage_to_be_dealt,
-                a: () => {cur_player.enemy_attack_resolved(attacking_enemy); resolve_enemy_attacks();}));
-            
+            Action callback = () => {
+                cur_player.enemy_attack_resolved(attacking_enemy);
+                resolve_enemy_attacks();
+            };
+            card_takes_damage(defending_player_card, damage_to_be_dealt, callback);
+
         }
         else
         {
             cur_state = GAMESTATE.ASSIGNING_UNDEFENDED_DAMAGE;
         }
+    }
+
+    public void card_takes_damage(PlayerCard card, int damage, Action callback=null)
+    {
+        card.take_damage(damage);
+        Debug.Log(card.get_name() + " is taking " + damage + " damage.");
+        game_event_handler.fire_game_event(GameEvent.CHARACTER_TOOK_DAMAGE,new GameArgs(c:card, 
+            i: damage,
+            a: () =>
+            {
+                if (card.is_dead())
+                {
+                    if (card.is_ally())
+                    {
+                        cur_player.ally_died(card);
+                        game_event_handler.fire_game_event(GameEvent.CARD_LEAVES_PLAY,new GameArgs(c:card,
+                            a: () =>
+                            {
+                                Debug.Log("SOMEONE DIED WHAT TO DO");
+                            },
+                            p: get_cur_player(),
+                            game: this));
+                    }
+                    else
+                    {
+                        Debug.Log("HERO DIED WHAT TO DO");
+                    }
+                    
+                }
+                Debug.Log("SOMEONE TOOK DAMAGE");
+
+                if (callback != null)
+                {
+                    callback();
+                }
+                
+            }));
     }
 
     public int get_damage_to_be_dealt()
@@ -828,14 +1235,12 @@ public class LOTRGame
 
     public void hero_chosen_to_take_undefended_damage(LOTRPlayer player, LOTRHero hero)
     {
-        hero.take_damage(damage_to_be_dealt);
-        fire_game_event(cur_player, GameEvent.GAME_EVENT_TYPE.TAKE_DAMAGE, new GameArgs(c: hero,
-            i: damage_to_be_dealt,
-            a: () => {cur_player.enemy_attack_resolved(attacking_enemy);
-                resolve_enemy_attacks();
-                //todo: check
-                }));
-        
+        Action callback = () =>
+        {
+            cur_player.enemy_attack_resolved(attacking_enemy);
+            resolve_enemy_attacks();
+        };
+        card_takes_damage(hero, damage_to_be_dealt, callback);
     }
 
     EnemyCard get_shadow_card()
@@ -860,7 +1265,8 @@ public class LOTRGame
     }
     void begin_refresh_phase()
     {
-        cur_phase = GAMEPHASE.REFRESH;
+        disallow_actions();
+        new_phase_started(GAMEPHASE.REFRESH);
         foreach (var player in players)
         {
             player.ready_all_exhausted_cards();
@@ -870,6 +1276,19 @@ public class LOTRGame
         //each player increases threat by 1
         //first player passes the first player token to the next player clockwise on his left
         //check for game over?
+        allow_actions_to_be_played(new_round);
+    }
+
+    void new_round()
+    {
+        foreach (LOTRPlayer player in players)
+        {
+            foreach (EnemyCard engaged_enemy in get_engaged_enemies(player))
+            {
+                engaged_enemy.clear_flags(LOTRAbility.CLEAR_MARKERS.END_OF_ROUND);
+            }
+        }
+        
         begin_resource_phase();
     }
 
@@ -878,12 +1297,23 @@ public class LOTRGame
         return player.get_threat_level();
     }
 
-
-
-    public void wait_for_response(Action if_yes=null,  bool response_is_yes_no = false, Action<Card> if_yes_with_card=null, Action what_to_do_after_responding=null)
+    public bool is_waiting_for_player_response()
     {
+        return waiting_for_player_response;
+    }
+
+
+    public void wait_for_response(Card card_to_respond_to, Action if_yes = null, bool response_is_yes_no = false,
+        Action<Card> if_yes_with_card = null, Action what_to_do_after_responding = null, int times_to_respond = 1
+        )
+    {
+        allow_actions_after_response = is_allowing_actions();
+        disallow_actions();
         this.response_is_yes_no = response_is_yes_no;
+        waiting_for_player_response = true;
         action_after_responding_yes = if_yes;
+        this.times_to_respond = times_to_respond;
+        this.card_to_respond_to = card_to_respond_to;
         action_with_card_after_responding_yes = if_yes_with_card;
         continuing_after_response = what_to_do_after_responding;
         Debug.Log("DO U WANNA RESPOND");
@@ -891,37 +1321,90 @@ public class LOTRGame
         cur_state = GAMESTATE.WAITING_FOR_RESPONSE;
     }
 
+    public void wait_for_forced_response(Card card_to_respond_to, Action<Card> after_responding_with_card = null,
+        Action what_to_do_after_responding = null, int times_to_respond = 1)
+    {
+        allow_actions_after_response = is_allowing_actions();
+        disallow_actions();
+        action_with_card_after_responding_yes = after_responding_with_card;
+        continuing_after_response = what_to_do_after_responding;
+        Debug.Log("RESPOND FUCKER");
+        waiting_for_player_response = true;
+        this.card_to_respond_to = card_to_respond_to;
+        state_before_response = cur_state;
+        cur_state = GAMESTATE.WAITING_FOR_RESPONSE_FORCED;
+        this.times_to_respond = times_to_respond;
+    }
+
     public bool is_response_yes_no()
     {
         return this.response_is_yes_no;
     }
-
+    
     public void not_going_to_respond()
     {
+        waiting_for_player_response = false;
         done_responding();
     }
 
     public void yes_responded(Card c=null)
     {
+        Debug.Log("Yes, I responded");
+        waiting_for_player_response = false;
+        times_responded += 1;
         if (c == null && action_after_responding_yes != null)
         {
+            Debug.Log("DO THE CLALBACK");
             action_after_responding_yes();
+            this.response_is_yes_no = false;
 
         } else if (action_after_responding_yes == null && action_with_card_after_responding_yes != null)
         {
             Debug.Log("I RESPONDED FUCKLER WITH CARD");
             action_with_card_after_responding_yes(c);
+            this.response_is_yes_no = false;
         }
-        Debug.Log("I RESPONDED FUCKLER");
-
-        done_responding();
+        Debug.Log("I RESPONDED FUCKLER " + times_responded + " AND " + times_to_respond);
+        if (times_responded >= times_to_respond)
+        {
+            done_responding();
+        }
+        
     }
     
     public void done_responding()
     {
+        if (allow_actions_after_response)
+        {
+            allow_actions_to_be_played();
+        }
+        else
+        {
+            disallow_actions();
+        }
+        times_responded = 0;
+        times_to_respond = 1;
         this.response_is_yes_no = false;
         action_with_card_after_responding_yes = null;
         action_after_responding_yes = null;
+        card_to_respond_to = null;
+        reset_valid_targets();
+        cur_state = state_before_response;
+        forced_response_after_action = false;
+        Debug.Log("Here we do event_controller.resume_handling BUT WHEN?!");
+        if (continuing_after_response != null)
+        {
+            Debug.Log("Continuing");
+            continuing_after_response();
+        }
+        Debug.Log("Do we resume handling here?!");
+        game_event_handler.resume_handling();
+        continuing_after_response = null;
+        //allow_actions_to_be_played();
+    }
+
+    public void reset_valid_targets()
+    {
         if (cards_set_true != null)
         {
             foreach (var card in cards_set_true)
@@ -929,13 +1412,6 @@ public class LOTRGame
                 card.reset_response_target();
             }
         }
-        cur_state = state_before_response;
-        if (continuing_after_response != null)
-        {
-            continuing_after_response();
-        }
-        
-        continuing_after_response = null;
     }
 
     public void set_valid_response_target(List<Card> cards_to_set_valid)
@@ -947,6 +1423,36 @@ public class LOTRGame
 
         cards_set_true = cards_to_set_valid;
     }
-    
+
+    public void show_options(int num_options)
+    {
+        num_options_to_display = num_options;
+    }
+
+    public bool is_showing_options()
+    {
+        return num_options_to_display != -1;
+    }
+    public void option_selected(int which_option)
+    {
+        num_options_to_display = -1;
+        object event_to_fire = null;
+        if (which_option == 1)
+        {
+            event_to_fire = GameEvent.OPTION_1_PICKED;
+        } else if (which_option == 2)
+        {
+            event_to_fire = GameEvent.OPTION_2_PICKED;
+        } else if (which_option == 3)
+        {
+            event_to_fire = GameEvent.OPTION_3_PICKED;
+        }
+        waiting_for_player_response = false;
+        game_event_handler.fire_game_event(event_to_fire, new GameArgs(game: this, p: get_cur_player(), c:card_to_respond_to, a:
+            () =>
+            {
+                //yes_responded();
+            }));
+    }
 
 }
